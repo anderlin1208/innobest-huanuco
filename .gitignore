@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+.env
+.streamlit/secrets.toml
+.ipynb_checkpoints/
+dataset/*
+!dataset/.gitkeep
+modelos/particiones.csv
+modelos/mobilenet/
+modelos/yolo_cls/
+.env.*
+!.env.example
+# Pesos generales opcionales y datos experimentales
+/yolo11n.pt
+/modelos/detector_general/
+/evaluacion_rechazo.csv
+# Fotografías revisadas/exportadas y feedback; no publicar imágenes de terceros
+/revision_pendientes/
+/feedback_revision/
+/feedback_aprobado/
+
+!/modelos/mobilenet/mejor_modelo.pt
+!/modelos/yolo_cls/entrenamiento/weights/best.pt
+.streamlit/secrets.toml
+revision_pendientes/
+feedback_aprobado/
