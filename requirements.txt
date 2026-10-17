@@ -1,0 +1,8 @@
+# Producción en Render Free: no incluir torch, torchvision, ultralytics, av ni streamlit-webrtc.
+streamlit>=1.51,<2
+onnxruntime>=1.20,<2
+numpy>=1.26,<3
+Pillow>=10.4,<13
+pymongo>=4.10,<5
+dnspython>=2.6,<3
+python-dotenv>=1.0,<2

@@ -1,0 +1,15 @@
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+.pytest_cache/
+dataset/
+*.pt
+*.pth
+*.pkl
+*.zip
+*.log

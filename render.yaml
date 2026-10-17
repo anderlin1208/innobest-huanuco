@@ -1,0 +1,12 @@
+# Opcional: configuración del servicio nuevo con Render Blueprint.
+services:
+  - type: web
+    name: innobest-huanuco-ligero
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m streamlit run app.py --server.address 0.0.0.0 --server.port $PORT --server.headless true
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: INNOBEST_CPU_THREADS
+        value: "1"
