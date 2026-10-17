@@ -1,5 +1,9 @@
 # INNOBEST — Cámara, correcciones y entrenamiento desde la web
 
+**Actualización de esta entrega:** la cámara en vídeo continuo se documenta en
+[README_DESPLIEGUE_RENDER.md](README_DESPLIEGUE_RENDER.md). Los puntos que siguen
+explican la captura de fotografía tradicional, que se conserva como alternativa.
+
 ## Capacidades implementadas
 - Cámara del navegador (`st.camera_input`) para **tomar una foto y clasificarla** inmediatamente después de capturarla. No es vídeo continuo; el navegador necesita permiso de cámara (localhost o HTTPS).
 - Correcciones instantáneas guardadas en MongoDB (con consentimiento optativo para almacenar foto). Volver a enviar **los mismos bytes** permite consultar la corrección previa, pero **no modifica los pesos**.
@@ -23,7 +27,7 @@
 4. La web muestra `en_cola`, `entrenando`, `completado_pendiente_validacion` o `fallido`. Tras completar, descarga los pesos y métricas. El administrador, después de una evaluación humana independiente, puede pulsar **Activar versión**. El sitio cargará desde MongoDB los modelos de cinco clases. También hay opción de **Volver a los modelos originales**.
 
 ## Limitaciones importantes
-- La cámara captura una foto; **NO** implementa vídeo continuo cuadro a cuadro.
+- En **Identificar un ave**, la cámara tradicional captura una foto. En **Cámara en vivo** ahora sí existe vídeo continuo con inferencia de fotogramas espaciados; no se analiza cada fotograma.
 - No hay entrenamiento por clic sin GPU/dataset supervisado. Las 100 épocas de dos modelos pueden tardar y la sesión T4 de Colab puede interrumpirse. Si se interrumpe, un trabajo `entrenando` requiere revisión manual.
 - En Render normalmente se ejecuta la inferencia CPU y el servidor web; el entrenamiento GPU queda a cargo de Colab u otro worker con GPU.
 - Las clases nuevas `no_ave` y `otra_ave` requieren múltiples ejemplos variados. Aprobar fotos aisladas **no garantiza** generalización.

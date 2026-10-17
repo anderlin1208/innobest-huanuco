@@ -1,17 +1,28 @@
-# INNOBEST Huánuco 2026 — Aplicación Python + MongoDB, versión de validación conservadora
+# INNOBEST Huánuco 2026 — Clasificación de aves y cámara en vivo
 
-**Empieza por [README_MEJORA.md](README_MEJORA.md)** para instalar, configurar MongoDB y probar el control de fotografías fuera de clase.
+**Comienza aquí:** [README_DESPLIEGUE_RENDER.md](README_DESPLIEGUE_RENDER.md).
 
-Esta entrega preserva dos checkpoints de clasificación entrenados anteriormente, pero **no los reentrena ni garantiza que reconozcan todas las fotos**. Añade un detector de aves genérico y consenso entre clasificadores para reducir predicciones forzadas; el comportamiento debe evaluarse con fotografías nuevas etiquetadas.
+Contiene los checkpoints reales entregados por el proyecto: MobileNetV3 Small,
+YOLO11-cls (tres especies) y YOLO11n COCO para verificar presencia de aves.
+La cámara en vivo funciona a través de WebRTC y envía al servidor únicamente
+fotogramas destinados a inferencia, sin guardar vídeo en la base de datos.
 
-Para Windows con Python 3.12, **sin entorno virtual**:
+Incluye reconocimiento en vivo, clasificación de fotografías, rechazo de imágenes
+no verificadas, correcciones humanas optativas, estadísticas MongoDB y panel
+administrativo de entrenamiento externo.
+
+**Limitaciones:** la detección de aves raras no está garantizada; la puntuación
+softmax no es una certeza biológica. El servidor Render requiere recursos CPU/RAM
+adecuados y TURN para redes que bloquean conexiones WebRTC directas. La formación
+de modelos se ejecuta con worker GPU aparte; ningún clic cambia los pesos solo.
+
+**Inicio rápido (PowerShell con Python 3.12):**
 
 ```powershell
-py -3.12 -m pip install --user -r requirements.txt
-Copy-Item .env.example .env
-# Edita .env y configura una cuenta MongoDB de permisos mínimos.
-py -3.12 -m unittest discover -s tests -v
-py -3.12 -m streamlit run app.py
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-El ZIP corregido **no contiene `.env`**. Si enviaste un archivo `.env` dentro de una copia anterior, rota esas credenciales en MongoDB Atlas. La aplicación funciona sin MongoDB para predecir, pero el registro de evaluaciones requiere credenciales nuevas.
+No guardes contraseñas ni URI privadas en el repositorio Git.

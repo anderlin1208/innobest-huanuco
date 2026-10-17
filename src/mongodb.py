@@ -8,6 +8,7 @@ from math import isfinite
 from pymongo import ASCENDING, DESCENDING, MongoClient
 
 from src.especies import CLASES
+from src.dataset_entrenamiento import CLASES_CINCO
 
 MODELOS = {'MobileNetV3', 'YOLO-cls'}
 
@@ -20,8 +21,8 @@ class RepositorioPredicciones:
             raise ValueError('El nombre de la base de datos no es válido.')
         self.cliente = MongoClient(
             uri,
-            serverSelectionTimeoutMS=6000,
-            connectTimeoutMS=6000,
+            serverSelectionTimeoutMS=4500,
+            connectTimeoutMS=4500,
             socketTimeoutMS=6000,
             appname='INNOBEST-Huanuco',
         )
@@ -69,7 +70,8 @@ class RepositorioPredicciones:
         if decision.especie is not None and decision.especie not in CLASES:
             raise ValueError('Especie no admitida.')
         autorizados = {'compatible_sin_verificar', 'rechazado_no_ave',
-                       'no_verificable', 'no_concluyente', 'modelos_discrepan'}
+                       'no_verificable', 'no_concluyente', 'modelos_discrepan',
+                       'rechazado_no_objetivo'}
         if decision.estado not in autorizados:
             raise ValueError('Estado de validación inválido.')
         por_modelo = {}
@@ -77,7 +79,7 @@ class RepositorioPredicciones:
             if not ranking:
                 continue
             probabilidades = dict(ranking)
-            if set(probabilidades) != set(CLASES):
+            if set(probabilidades) not in (set(CLASES), set(CLASES_CINCO)):
                 raise ValueError('Clases inválidas.')
             if any(not isfinite(float(v)) or not 0 <= float(v) <= 1 for v in probabilidades.values()):
                 raise ValueError('Probabilidades fuera de rango.')

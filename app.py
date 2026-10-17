@@ -1,5 +1,6 @@
 """Dashboard INNOBEST Huánuco 2026: inferencia real y estadísticas verificables."""
 import io
+import hashlib
 import json
 import os
 import time
@@ -11,10 +12,11 @@ import plotly.express as px
 from dotenv import load_dotenv
 from pymongo.errors import PyMongoError
 import streamlit as st
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from src.especies import CLASES, ESPECIES
-from src.modelo import cargar_modelo, predecir
+from src.motor_inferencia import (modelo_mobile, modelo_detector, modelo_yolo,
+                                  clasificar_yolo, BLOQUEO_MODELOS)
 from src.decision import evaluar_decision, evaluar_decision_cinco
 from src.filtro_aves import cargar_detector, verificar_ave
 from src.mongodb import RepositorioPredicciones
@@ -90,34 +92,25 @@ def guardar_prediccion(etiqueta, probabilidad, version, concluyente, ranking):
         return False, f'Error al guardar ({type(error).__name__}). Revisa la conexión de MongoDB.'
 
 
-@st.cache_resource(show_spinner='Cargando modelo entrenado...')
+# Un único conjunto de modelos compartido por fotografías y cámara en vivo.
+@st.cache_resource(show_spinner='Cargando MobileNetV3...')
 def obtener_modelo():
-    return cargar_modelo(MODELO_PATH)
+    return modelo_mobile()
 
 
-@st.cache_resource(show_spinner='Cargando detector general de aves (primera vez requiere internet)...')
+@st.cache_resource(show_spinner='Cargando detector general de aves...')
 def obtener_detector():
-    # Descarga automática de pesos COCO por Ultralytics cuando aún no están presentes.
-    # No confundir yolo11n.pt de detección con best.pt de clasificación propia.
-    ruta = DETECTOR_PATH if DETECTOR_PATH.is_file() else 'yolo11n.pt'
-    return cargar_detector(ruta)
+    return modelo_detector()
 
 
-@st.cache_resource(show_spinner='Cargando YOLO clasificación...')
+@st.cache_resource(show_spinner='Cargando YOLO-cls...')
 def obtener_yolo():
-    from ultralytics import YOLO
-    return YOLO(str(YOLO_PATH))
+    return modelo_yolo()
 
 
 def predecir_yolo(imagen):
-    import numpy as np
-    im = np.asarray(imagen.convert('RGB'))
-    resultado = obtener_yolo().predict(source=im, imgsz=224, device='cpu', verbose=False)[0]
-    ranking = [(str(resultado.names[i]), float(p)) for i, p in enumerate(resultado.probs.data.cpu().tolist())]
-    ranking = [(nombre, prob) for nombre, prob in ranking if nombre in CLASES]
-    if len(ranking) != len(CLASES):
-        raise ValueError('Las clases de YOLO no corresponden a las tres especies configuradas.')
-    return sorted(ranking, key=lambda x: x[1], reverse=True)
+    with BLOQUEO_MODELOS:
+        return clasificar_yolo(imagen)
 
 
 @st.cache_resource(show_spinner='Descargando y cargando nuevos modelos desde MongoDB...')
@@ -162,13 +155,14 @@ modelo_disponible = MODELO_PATH.exists()
 yolo_disponible = YOLO_PATH.exists()
 
 st.sidebar.header('Explorar el sistema')
-vista = st.sidebar.radio('Sección', ['Identificar un ave', 'Resultados del entrenamiento',
+vista = st.sidebar.radio('Sección', ['Cámara en vivo', 'Identificar un ave', 'Resultados del entrenamiento',
                                     'Especies protegidas', 'Actividad del sistema',
                                     'Administración de IA'])
 st.sidebar.divider()
-st.sidebar.info('Cámara y correcciones en la web. Entrenamiento solicitado desde la web y ejecutado por GPU Colab T4. Datos: MongoDB.')
+st.sidebar.info('Cámara en vivo sin guardado de fotogramas. Correcciones desde fotografías; entrenamiento con GPU externa. MongoDB es opcional para predecir.')
 version_activa = None
-if vista == 'Identificar un ave':
+if vista == 'Identificar un ave' and st.sidebar.checkbox(
+        'Consultar versión reentrenada de MongoDB (opcional)', value=False):
     try:
         version_activa = detectar_version_activa()
         if version_activa:
@@ -179,7 +173,11 @@ if vista == 'Identificar un ave':
         st.sidebar.warning('Versión actual no disponible ('+type(error).__name__+'); se probará la original.')
         version_activa = None
 
-if vista == 'Identificar un ave':
+if vista == 'Cámara en vivo':
+    from src.camara_vivo import mostrar_camara_vivo
+    mostrar_camara_vivo()
+
+elif vista == 'Identificar un ave':
     st.subheader('Reconocimiento con control de imágenes ajenas')
     st.caption('La verificación de especie utiliza ambos modelos y un detector general de aves. '
                'Los resultados son provisionales y pueden fallar; no se declara certeza biológica.')
@@ -198,50 +196,71 @@ if vista == 'Identificar un ave':
             try:
                 if archivo.size > 8 * 1024 * 1024:
                     raise ValueError('Para identificar un ave, la fotografía debe pesar como máximo 8 MB.')
-                foto = Image.open(io.BytesIO(archivo.getvalue()))
-                foto.load()
-                st.image(foto, caption='Imagen seleccionada', use_container_width=True)
+                with Image.open(io.BytesIO(archivo.getvalue())) as origen:
+                    if origen.width * origen.height > 24_000_000:
+                        raise ValueError('La fotografía excede 24 megapíxeles.')
+                    foto = ImageOps.exif_transpose(origen).convert('RGB')
+                    # La inferencia no necesita matrices enormes. Los bytes originales
+                    # solo se usan si el usuario autoriza guardar una copia sin EXIF.
+                    foto.thumbnail((960, 960), Image.Resampling.LANCZOS)
+                st.image(foto, caption='Vista de análisis optimizada', use_container_width=True)
             except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
                 st.error('El archivo no contiene una imagen válida.')
 
     with derecha:
-        # Inicializar por cada ejecución; nunca reutilizar predicciones de una foto anterior.
+        # No consultar MongoDB para inferir. Los tres modelos son locales.
         filtro = None
         decision = None
         ranking_m, ranking_y = [], []
         if not (modelo_disponible and yolo_disponible) and not version_activa:
-            st.error('Para validar por consenso faltan pesos de uno o ambos clasificadores.')
+            st.error('Faltan pesos de uno o ambos clasificadores para validar el consenso.')
             if not modelo_disponible:
                 st.code(str(MODELO_PATH.relative_to(BASE)))
             if not yolo_disponible:
                 st.code(str(YOLO_PATH.relative_to(BASE)))
         elif foto is not None:
             try:
-                # Primero se comprueba la presencia de un ave: no invocar clasificadores
-                # de tres clases sobre fotos de gatos, tigres u otros animales.
-                filtro = verificar_ave(obtener_detector(), foto)
+                # El usuario puede marcar casillas y enviar correcciones sin volver a
+                # ejecutar tres redes neuronales sobre la misma fotografía.
+                clave_foto = hashlib.sha256(archivo.getvalue()).hexdigest()
+                clave_modelo = version_activa[0] if version_activa else 'original'
+                clave_cache = (clave_foto, clave_modelo)
+                anterior = st.session_state.get('innobest_inferencia_foto')
+                if anterior and anterior['clave'] == clave_cache:
+                    filtro = anterior['filtro']
+                    decision = anterior['decision']
+                    ranking_m, ranking_y = anterior['mobile'], anterior['yolo']
+                else:
+                    with st.spinner('Verificando presencia de ave y comparando modelos...'):
+                        with BLOQUEO_MODELOS:
+                            filtro = verificar_ave(obtener_detector(), foto)
+                            if filtro.estado == 'ave_detectada':
+                                if version_activa:
+                                    ranking_m = predecir_mobile_versionado(version_activa[1], foto)
+                                    ranking_y = predecir_yolo_versionado(version_activa[1], foto)
+                                else:
+                                    from src.modelo import predecir
+                                    ranking_m = predecir(obtener_modelo(), foto)
+                                    ranking_y = predecir_yolo(foto)
+                        decision = (
+                            evaluar_decision_cinco(filtro.estado, ranking_m, ranking_y)
+                            if version_activa else evaluar_decision(filtro.estado, ranking_m, ranking_y)
+                        )
+                    st.session_state['innobest_inferencia_foto'] = {
+                        'clave': clave_cache, 'filtro': filtro, 'decision': decision,
+                        'mobile': ranking_m, 'yolo': ranking_y,
+                    }
+
                 st.caption('Filtro general de aves: ' + filtro.descripcion)
                 if filtro.estado != 'ave_detectada':
-                    decision = evaluar_decision(filtro.estado, [], [])
                     st.warning('SIN PREDICCIÓN VÁLIDA — ' + decision.motivo)
-                    st.info('No se asigna 0 % a ninguna especie: 0 % sería una probabilidad ficticia.')
-                    ranking_m, ranking_y = [], []
+                    st.info('No se asigna 0 % ficticio a ninguna especie.')
                 else:
-                    with st.spinner('Comparando MobileNetV3 y YOLO11-cls...'):
-                        if version_activa:
-                            ranking_m = predecir_mobile_versionado(version_activa[1], foto)
-                            ranking_y = predecir_yolo_versionado(version_activa[1], foto)
-                        else:
-                            ranking_m = predecir(obtener_modelo(), foto)
-                            ranking_y = predecir_yolo(foto)
-                    # Umbrales provisionales hasta calibrar con validación conocida y OOD.
-                    decision = (evaluar_decision_cinco(filtro.estado, ranking_m, ranking_y)
-                                if version_activa else evaluar_decision(filtro.estado, ranking_m, ranking_y))
                     orden = [('MobileNetV3', ranking_m), ('YOLO-cls', ranking_y)]
                     orden.sort(key=lambda item: item[0] != algoritmo)
                     for nombre, ranking in orden:
                         especie_clave, valor = ranking[0]
-                        st.write(f'**{nombre}**: {NOMBRES.get(especie_clave, especie_clave)} — puntuación softmax {valor:.1%}')
+                        st.write(f'**{nombre}**: {NOMBRES.get(especie_clave, especie_clave)} — softmax {valor:.1%}')
                     if decision.especie:
                         especie = ESPECIES[decision.especie]
                         st.success(f'IDENTIFICACIÓN PRELIMINAR: {especie["comun"]}')
@@ -256,30 +275,28 @@ if vista == 'Identificar un ave':
                             st.plotly_chart(px.bar(df, x='Puntuación', y='Especie',
                                                    orientation='h', range_x=[0, 1], text_auto='.1%'),
                                             use_container_width=True, key='chart_' + nombre)
-                    st.caption('Los umbrales (85 % y margen 20 puntos) son heurísticos y NO están '
-                               'calibrados. Dos modelos pueden coincidir y equivocarse.')
+                    st.caption('Los umbrales (85 % y margen 20 puntos) son heurísticos; '
+                               'no están calibrados y ambos modelos pueden equivocarse.')
                 if st.button('Guardar evaluación en MongoDB', type='primary'):
                     repo = repositorio_configurado()
                     if repo is None:
-                        st.warning('MongoDB no está configurado. Revisa MONGODB_URI en .env.')
+                        st.warning('MongoDB no está configurado. Revisa MONGODB_URI.')
                     else:
                         try:
                             repo.registrar_evaluacion(decision=decision, mobile=ranking_m,
                                                      yolo=ranking_y, resultado_filtro=filtro)
-                            st.success('Evaluación almacenada (sin imagen y sin identificación confirmada).')
-                        except (PyMongoError, ValueError):
-                            st.error('No se pudo guardar la evaluación; verifica MongoDB.')
+                            st.success('Evaluación anónima almacenada en MongoDB.')
+                        except (PyMongoError, ValueError) as exc:
+                            st.error('No se guardó la evaluación (' + type(exc).__name__ + ').')
             except Exception as exc:
-                # Mostramos categoría de error, sin exponer URIs ni datos internos.
-                st.error(f'No se pudo verificar la fotografía ({type(exc).__name__}). '
-                         'El filtro necesita los pesos yolo11n.pt de detección general; '
-                         'se descargan una vez con acceso a internet. No se asignó una especie.')
+                st.error('No se pudo analizar la fotografía (' + type(exc).__name__ + '). '
+                         'Comprueba que estén los tres pesos .pt y revisa los logs de Python.')
         else:
-            st.info('Sube una foto. Primero verificaremos si hay un ave; luego compararemos ambos modelos.')
+            st.info('Sube una fotografía o captura una imagen; la cámara en vivo está en el menú.')
     if foto is not None:
         st.divider()
         st.subheader('Enseñar mediante una corrección humana')
-        st.caption('**Tiempo real:** la etiqueta se registra en MongoDB y puede consultarse al volver a subir el MISMO archivo. '
+        st.caption('**Retroalimentación:** la etiqueta se guarda en MongoDB y puede consultarse al volver a subir el MISMO archivo. '
                    '**Entrenamiento:** ninguno de los dos modelos cambia sus pesos por un clic; las imágenes '
                    'autorizadas deben revisarse y reentrenarse posteriormente con GPU.')
         try:
@@ -288,13 +305,23 @@ if vista == 'Identificar un ave':
             repo_general = repositorio_configurado()
             if repo_general:
                 repo_feedback = RepositorioFeedback(repo_general.bd)
-                registro_previo = repo_feedback.reciente(preparada.huella)
-                if registro_previo:
-                    etiqueta_anterior = NOMBRES.get(registro_previo.get('etiqueta_revisada') or registro_previo['etiqueta_usuario'],
-                                                   registro_previo.get('etiqueta_revisada') or registro_previo['etiqueta_usuario'])
-                    estado = registro_previo.get('estado_revision', 'pendiente')
-                    st.info(f'Etiqueta humana guardada antes para este archivo: **{etiqueta_anterior}** '
-                            f'(revisión: **{estado}**). Esta información NO es una predicción nueva de IA.')
+                # Consultar Atlas solo a petición del usuario. Una desconexión nunca
+                # debe impedir predecir ni mostrar el formulario de retroalimentación.
+                if st.checkbox('Consultar correcciones anteriores de esta fotografía', value=False,
+                               key='consultar_' + preparada.huella[:16]):
+                    try:
+                        registro_previo = repo_feedback.reciente(preparada.huella)
+                        if registro_previo:
+                            clave = registro_previo.get('etiqueta_revisada') or registro_previo['etiqueta_usuario']
+                            etiqueta_anterior = NOMBRES.get(clave, clave)
+                            estado = registro_previo.get('estado_revision', 'pendiente')
+                            st.info(f'Etiqueta humana registrada: **{etiqueta_anterior}** '
+                                    f'(revisión: **{estado}**). No es una predicción nueva de IA.')
+                        else:
+                            st.caption('No hay correcciones guardadas para este archivo.')
+                    except PyMongoError as exc:
+                        st.warning('MongoDB no respondió (' + type(exc).__name__ + '). '
+                                   'Puedes seguir identificando la imagen; no se recuperó el historial.')
             else:
                 st.info('Para recordar correcciones configura MongoDB en el archivo .env.')
             with st.form('formulario_correccion_' + preparada.huella[:16]):

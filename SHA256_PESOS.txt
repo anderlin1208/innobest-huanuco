@@ -1,0 +1,3 @@
+ce189aa952d0fe62869a36c9e2fa4cd5f947140d6baaf6d3948684474e15ae3a  modelos/mobilenet/mejor_modelo.pt
+c4168aaa6d87fb5b367754ad8713935aa380508b4e4e99d981819a8b97383895  modelos/yolo_cls/entrenamiento/weights/best.pt
+0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1  yolo11n.pt

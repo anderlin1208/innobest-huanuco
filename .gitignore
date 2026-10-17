@@ -6,21 +6,26 @@ __pycache__/
 dataset/*
 !dataset/.gitkeep
 modelos/particiones.csv
-modelos/mobilenet/
-modelos/yolo_cls/
+# Mantener exactamente los checkpoints necesarios para producción.
+/modelos/mobilenet/**
+!/modelos/mobilenet/mejor_modelo.pt
+/modelos/yolo_cls/**
+!/modelos/yolo_cls/entrenamiento/
+/modelos/yolo_cls/entrenamiento/**
+!/modelos/yolo_cls/entrenamiento/weights/
+/modelos/yolo_cls/entrenamiento/weights/**
+!/modelos/yolo_cls/entrenamiento/weights/best.pt
 .env.*
 !.env.example
 # Pesos generales opcionales y datos experimentales
-/yolo11n.pt
 /modelos/detector_general/
 /evaluacion_rechazo.csv
 # Fotografías revisadas/exportadas y feedback; no publicar imágenes de terceros
 /revision_pendientes/
 /feedback_revision/
 /feedback_aprobado/
-
-!/modelos/mobilenet/mejor_modelo.pt
-!/modelos/yolo_cls/entrenamiento/weights/best.pt
-.streamlit/secrets.toml
-revision_pendientes/
-feedback_aprobado/
+# Entornos locales y archivos temporales.
+.venv/
+venv/
+.pytest_cache/
+*.log
